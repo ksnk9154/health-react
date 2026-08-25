@@ -1,18 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import GlassCard from '../components/GlassCard';
 import StatCard from '../components/StatCard';
-import { Users, FileText, TrendingUp, Activity, Calendar, Download } from 'lucide-react';
+import { Users, FileText, TrendingUp, Activity, Calendar, Download, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
   AreaChart,
   Area,
   PieChart,
   Pie,
   Cell,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,45 +19,129 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { useLanguage } from '../i18n/LanguageContext';
+import { adminAnalyticsService } from '../services/api';
+
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+
+// Simple CSV export helper
+const downloadCSV = (filename, rows) => {
+  if (!rows || rows.length === 0) return;
+  const headers = Object.keys(rows[0]);
+  const lines = [
+    headers.join(','),
+    ...rows.map((r) =>
+      headers
+        .map((h) => {
+          const v = r[h];
+          if (v == null) return '';
+          const s = String(v);
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        })
+        .join(',')
+    ),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 const AnalyticsPage = () => {
   const { t } = useLanguage();
   const [timeRange, setTimeRange] = useState('month');
 
-  const monthlyData = [
-    { month: 'Jan', patients: 120, records: 450, revenue: 12000 },
-    { month: 'Feb', patients: 150, records: 520, revenue: 15000 },
-    { month: 'Mar', patients: 180, records: 680, revenue: 18000 },
-    { month: 'Apr', patients: 165, records: 590, revenue: 16500 },
-    { month: 'May', patients: 200, records: 750, revenue: 20000 },
-    { month: 'Jun', patients: 220, records: 820, revenue: 22000 }
-  ];
+  // Backend-driven data
+  const [kpis, setKpis] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const departmentData = [
-    { name: 'Cardiology', value: 400, color: '#3b82f6' },
-    { name: 'Neurology', value: 300, color: '#10b981' },
-    { name: 'Orthopedics', value: 300, color: '#f59e0b' },
-    { name: 'Pediatrics', value: 200, color: '#8b5cf6' },
-    { name: 'Others', value: 150, color: '#ec4899' }
-  ];
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [dashResult, statsResult, analyticsResult] = await Promise.all([
+        adminAnalyticsService.getDashboard(),
+        adminAnalyticsService.getStats(),
+        adminAnalyticsService.getAnalytics(),
+      ]);
+      setKpis(dashResult?.kpis || null);
+      setStats(statsResult || null);
+      setAnalytics(analyticsResult || null);
+    } catch (err) {
+      setError(err.response?.data?.detail || t('dashboard.loadFailed'));
+      console.error('Failed to load analytics data', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const weeklyActivityData = [
-    { day: 'Mon', appointments: 45, consultations: 38, emergencies: 5 },
-    { day: 'Tue', appointments: 52, consultations: 42, emergencies: 8 },
-    { day: 'Wed', appointments: 49, consultations: 40, emergencies: 6 },
-    { day: 'Thu', appointments: 63, consultations: 51, emergencies: 7 },
-    { day: 'Fri', appointments: 58, consultations: 48, emergencies: 4 },
-    { day: 'Sat', appointments: 35, consultations: 28, emergencies: 9 },
-    { day: 'Sun', appointments: 28, consultations: 22, emergencies: 12 }
-  ];
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const ageDistribution = [
-    { age: '0-18', count: 120 },
-    { age: '19-35', count: 280 },
-    { age: '36-50', count: 350 },
-    { age: '51-65', count: 240 },
-    { age: '65+', count: 180 }
-  ];
+  const formatNumber = (n) => (n == null ? '0' : Number(n).toLocaleString());
+
+  // Monthly trends: combine user_growth + record_trends from backend
+  const monthlyData = (analytics?.user_growth || []).map((item) => {
+    const trend = (analytics?.record_trends || []).find((r) => r.month === item.month);
+    return {
+      month: item.month || '',
+      patients: item.active_users || 0,
+      records: trend?.records || 0,
+    };
+  });
+
+  // Users by role -> pie chart
+  const roleEntries = Object.entries(stats?.users_by_role || {});
+  const departmentData = roleEntries.map(([name, value], index) => ({
+    name: name.charAt(0).toUpperCase() + name.slice(1),
+    value: Number(value) || 0,
+    color: COLORS[index % COLORS.length],
+  }));
+
+  // Records by month -> bar chart
+  const recordsByMonthData = (stats?.records_by_month || []).map((item) => ({
+    name: item.month || '',
+    records: item.count || 0,
+  }));
+
+  // Staff activity -> bar chart
+  const staffActivityData = (analytics?.staff_activity || []).map((item) => ({
+    name: `Staff ${item.staff_id}`,
+    managedUsers: item.managed_users || 0,
+  }));
+
+  const totalUsers = kpis?.total_users || 0;
+  const totalRecords = kpis?.total_records || 0;
+  const activeUsers = kpis?.active_users || 0;
+  const totalStaff = kpis?.total_staff || 0;
+
+  const monthlyGrowth =
+    analytics?.user_growth && analytics.user_growth.length >= 2
+      ? Math.max(
+          ((analytics.user_growth[analytics.user_growth.length - 1].active_users || 0) -
+            (analytics.user_growth[0].active_users || 0)) /
+            Math.max(analytics.user_growth[0].active_users || 1, 1) *
+            100,
+          0
+        )
+      : null;
+
+  const handleExport = () => {
+    const data =
+      monthlyData.length > 0
+        ? monthlyData
+        : recordsByMonthData.map((r) => ({ month: r.name, count: r.records }));
+    downloadCSV('analytics.csv', data);
+  };
 
   const timeRangeLabels = {
     week: t('analytics.week'),
@@ -77,59 +159,87 @@ const AnalyticsPage = () => {
             {t('analytics.subtitle')}
           </p>
         </div>
-        <div className="flex gap-2">
-          {['week', 'month', 'year'].map((range) => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                timeRange === range
-                  ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg'
-                  : 'backdrop-blur-md bg-white/70 dark:bg-gray-800/70 text-gray-700 dark:text-gray-300 hover:bg-white/90 dark:hover:bg-gray-800/90'
-              }`}
-            >
-              {timeRangeLabels[range]}
-            </button>
-          ))}
-          <Button variant="outline" className="backdrop-blur-md bg-white/70 dark:bg-gray-800/70">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-2">
+            {['week', 'month', 'year'].map((range) => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  timeRange === range
+                    ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg'
+                    : 'backdrop-blur-md bg-white/70 dark:bg-gray-800/70 text-gray-700 dark:text-gray-300 hover:bg-white/90 dark:hover:bg-gray-800/90'
+                }`}
+              >
+                {timeRangeLabels[range]}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="p-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            aria-label={t('common.refresh')}
+          >
+            <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            className="backdrop-blur-md bg-white/70 dark:bg-gray-800/70"
+          >
             <Download className="w-4 h-4 mr-2" />
             {t('analytics.export')}
           </Button>
         </div>
       </div>
 
+      {error && (
+        <GlassCard className="p-4 border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+            <button
+              onClick={loadData}
+              className="px-3 py-1 text-sm font-medium text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/30 rounded hover:bg-red-200 transition-colors"
+            >
+              {t('common.retry')}
+            </button>
+          </div>
+        </GlassCard>
+      )}
+
       {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title={t('analytics.totalPatients')}
-          value="1,234"
+          value={loading ? '…' : formatNumber(totalUsers)}
           icon={Users}
           trend="up"
-          trendValue="+12.5%"
+          trendValue=""
           color="blue"
         />
         <StatCard
           title={t('analytics.totalRecords')}
-          value="4,562"
+          value={loading ? '…' : formatNumber(totalRecords)}
           icon={FileText}
           trend="up"
-          trendValue="+8.2%"
+          trendValue=""
           color="green"
         />
         <StatCard
           title={t('analytics.monthlyGrowth')}
-          value="18.5%"
+          value={loading ? '…' : monthlyGrowth == null ? '0%' : `${monthlyGrowth.toFixed(1)}%`}
           icon={TrendingUp}
-          trend="up"
-          trendValue="+2.4%"
+          trend={monthlyGrowth != null && monthlyGrowth > 0 ? 'up' : 'down'}
+          trendValue={monthlyGrowth == null ? '' : `${monthlyGrowth >= 0 ? '+' : ''}${monthlyGrowth.toFixed(1)}%`}
           color="purple"
         />
         <StatCard
           title={t('analytics.activeCases')}
-          value="342"
+          value={loading ? '…' : formatNumber(activeUsers)}
           icon={Activity}
-          trend="down"
-          trendValue="-3.1%"
+          trend="up"
+          trendValue=""
           color="orange"
         />
       </div>
@@ -141,124 +251,164 @@ const AnalyticsPage = () => {
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
             {t('analytics.monthlyTrends')}
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={monthlyData}>
-              <defs>
-                <linearGradient id="colorPatients" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorRecords" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
-              <XAxis dataKey="month" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend />
-              <Area
-                type="monotone"
-                dataKey="patients"
-                stroke="#3b82f6"
-                fillOpacity={1}
-                fill="url(#colorPatients)"
-              />
-              <Area
-                type="monotone"
-                dataKey="records"
-                stroke="#10b981"
-                fillOpacity={1}
-                fill="url(#colorRecords)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {loading ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('common.loading')}
+            </div>
+          ) : monthlyData.length === 0 ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('dashboard.noData')}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={monthlyData}>
+                <defs>
+                  <linearGradient id="colorPatients" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="colorRecords" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
+                <XAxis dataKey="month" stroke="#9ca3af" />
+                <YAxis stroke="#9ca3af" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                  }}
+                />
+                <Legend />
+                <Area
+                  type="monotone"
+                  dataKey="patients"
+                  name={t('analytics.totalPatients')}
+                  stroke="#3b82f6"
+                  fillOpacity={1}
+                  fill="url(#colorPatients)"
+                />
+                <Area
+                  type="monotone"
+                  dataKey="records"
+                  name={t('analytics.totalRecords')}
+                  stroke="#10b981"
+                  fillOpacity={1}
+                  fill="url(#colorRecords)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </GlassCard>
 
-        {/* Department Distribution - Pie Chart */}
+        {/* Users by Role - Pie Chart */}
         <GlassCard className="p-6">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
             {t('analytics.departmentDistribution')}
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={departmentData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {departmentData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+          {loading ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('common.loading')}
+            </div>
+          ) : departmentData.every((d) => d.value === 0) ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('dashboard.noData')}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={departmentData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={100}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {departmentData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </GlassCard>
       </div>
 
       {/* Charts Row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Weekly Activity - Bar Chart */}
+        {/* Staff Activity - Bar Chart */}
         <GlassCard className="p-6">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
             {t('analytics.weeklyActivity')}
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={weeklyActivityData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
-              <XAxis dataKey="day" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Legend />
-              <Bar dataKey="appointments" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="consultations" fill="#10b981" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="emergencies" fill="#ef4444" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {loading ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('common.loading')}
+            </div>
+          ) : staffActivityData.length === 0 ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('dashboard.noData')}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={staffActivityData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
+                <XAxis dataKey="name" stroke="#9ca3af" />
+                <YAxis stroke="#9ca3af" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                  }}
+                />
+                <Legend />
+                <Bar dataKey="managedUsers" name={t('analytics.activeCases')} fill="#3b82f6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </GlassCard>
 
-        {/* Age Distribution */}
+        {/* Records by Month - Bar Chart */}
         <GlassCard className="p-6">
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
-            {t('analytics.ageDistribution')}
+            {t('analytics.monthlyTrends')}
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={ageDistribution} layout="horizontal">
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
-              <XAxis type="number" stroke="#9ca3af" />
-              <YAxis dataKey="age" type="category" stroke="#9ca3af" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-                }}
-              />
-              <Bar dataKey="count" fill="#8b5cf6" radius={[0, 8, 8, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {loading ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('common.loading')}
+            </div>
+          ) : recordsByMonthData.length === 0 ? (
+            <div className="flex items-center justify-center h-[300px] text-gray-500 dark:text-gray-400">
+              {t('dashboard.noData')}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={recordsByMonthData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.1} />
+                <XAxis dataKey="name" stroke="#9ca3af" />
+                <YAxis stroke="#9ca3af" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                  }}
+                />
+                <Bar dataKey="records" name={t('analytics.totalRecords')} fill="#8b5cf6" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </GlassCard>
       </div>
 
@@ -307,3 +457,4 @@ const AnalyticsPage = () => {
 };
 
 export default AnalyticsPage;
+

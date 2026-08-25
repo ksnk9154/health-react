@@ -1,0 +1,32 @@
+# Deploy Backend → Render.com (Free Tier)
+
+name: Deploy Backend → Render.com
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "render.yaml"
+      - ".github/workflows/deploy-backend-render.yml"
+  workflow_dispatch:
+    inputs:
+      clearCache:
+        description: "Clear Render build cache"
+        required: false
+        default: "false"
+        type: boolean
+
+jobs:
+  render-deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        uses: render-deploy/render-deploy-action@v6
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+          wait-for-success: true
+        env:
+          CLEAR_CACHE: ${{ github.event.inputs.clearCache || 'false' }}

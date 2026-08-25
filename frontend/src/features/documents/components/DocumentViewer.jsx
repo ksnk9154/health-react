@@ -3,6 +3,7 @@ import { X, Loader, AlertCircle } from 'lucide-react';
 import SummaryTab from './SummaryTab';
 import AskAITab from './AskAITab';
 import MetadataTab from './MetadataTab';
+import ObservationsTab from './ObservationsTab';
 import Modal from './Modal';
 
 /**
@@ -122,6 +123,7 @@ function DocumentViewerContent({ document, activeTab, setActiveTab, onClose }) {
   const tabs = [
     { id: 'summary', label: 'Summary' },
     { id: 'askai', label: 'Ask AI' },
+    { id: 'observations', label: 'Observations' },
     { id: 'metadata', label: 'Metadata' },
   ];
 
@@ -176,6 +178,11 @@ function DocumentViewerContent({ document, activeTab, setActiveTab, onClose }) {
         {activeTab === 'askai' && (
           <div id="tab-panel-askai" role="tabpanel">
             <AskAITab document={document} />
+          </div>
+        )}
+        {activeTab === 'observations' && (
+          <div id="tab-panel-observations" role="tabpanel">
+            <ObservationsTab document={document} />
           </div>
         )}
         {activeTab === 'metadata' && (

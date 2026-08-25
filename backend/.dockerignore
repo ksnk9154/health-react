@@ -1,0 +1,47 @@
+# Python
+__pycache__/__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads / generated content
+storage/
+*.pdf
+*.docx
+*.txt
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Tests
+.pytest_cache/
+tests/
+test_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Misc
+node_modules/
+*.log
+.DS_Store

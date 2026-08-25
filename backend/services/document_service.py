@@ -17,6 +17,7 @@ from db.models import Document, DocumentAnalysis
 from services.parsers import parse_document, get_parser, DocumentParseResult, DocumentErrorCode
 from services.chunk_service import chunk_service
 from services.task_service import task_service
+from services.health_observation_service import store_document_observations
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,20 @@ def upload_document(
             document.id, user_id, safe_filename, len(file_content), checksum,
         )
 
+                # Notify the user a document was uploaded (best-effort side-effect).
+        try:
+            from services.notification_service import create_notification
+            create_notification(
+                user_id,
+                title="New health document uploaded",
+                message=safe_filename,
+                type="document",
+                data={"document_id": document.id, "checksum": checksum},
+                dedupe_key=f"upload:{user_id}:{checksum}",
+            )
+        except Exception:
+            logger.exception("Failed to create upload notification for document %d", document.id)
+
         return {
             "success": True,
             "message": "Document uploaded successfully",
@@ -266,16 +281,42 @@ def extract_document(document_id: int, user_id: int, background_tasks) -> Dict[s
             }
 
         if document.status == "READY":
+            meta = {}
+            if document.doc_metadata:
+                try:
+                    meta = json.loads(document.doc_metadata)
+                except json.JSONDecodeError:
+                    pass
+
+            # Backfill deterministic observations for documents that were
+            # extracted before observation extraction was introduced to the
+            # pipeline.  Extraction is idempotent (the stale observations are
+            # replaced), non-fatal, and only touches READY documents that have
+            # text.  This ensures the "Analyze My Health Data" flow can see
+            # document-derived observations even on legacy uploads.
+            if document.extracted_text:
+                try:
+                    observation_count = store_document_observations(session, document)
+                    meta["health_observation_count"] = observation_count
+                    document.doc_metadata = json.dumps(meta)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    logger.exception(
+                        "Observation backfill failed for ready document %d",
+                        document.id,
+                    )
+
             return {
                 "success": True,
                 "message": "Document already extracted",
                 "data": {
                     "id": document.id,
                     "status": document.status,
-                    "word_count": document.metadata.get("word_count") if document.metadata else None,
+                    "word_count": meta.get("word_count"),
+                    "observation_count": meta.get("health_observation_count"),
                 },
             }
-
         # 2. Update status to EXTRACTING
         document.status = "EXTRACTING"
         document.updated_at = _now_iso()
@@ -372,7 +413,54 @@ def _perform_extraction(document_id: int):
             meta["page_count"] = result.page_count
             document.doc_metadata = json.dumps(meta)
 
+            # Observation extraction is deterministic and non-fatal: the document
+            # remains usable even when no verified measurement can be found.
+            try:
+                observation_count = store_document_observations(session, document)
+                meta["health_observation_count"] = observation_count
+                document.doc_metadata = json.dumps(meta)
+            except Exception:
+                logger.exception("Health observation extraction failed for document %d", document_id)
+
         session.commit()
+
+        # ---- Event-driven notifications (best-effort, never break extraction) ----
+        try:
+            from services.notification_service import create_notification
+            from db.models import HealthObservation
+
+            create_notification(
+                document.user_id,
+                title="Document extracted",
+                message=document.original_filename,
+                type="document",
+                data={"document_id": document.id},
+            )
+
+            # High / abnormal lab values flagged by the source report.
+            abnormal = session.execute(
+                select(HealthObservation).where(
+                    HealthObservation.document_id == document.id,
+                    HealthObservation.status.in_(("HIGH", "LOW", "ABNORMAL")),
+                )
+            ).scalars().all()
+            for obs in abnormal:
+                value = obs.value_text if obs.value_text is not None else obs.value_numeric
+                create_notification(
+                    document.user_id,
+                    title=f"Health alert: {obs.name} is {obs.status.lower()}",
+                    message=f"{obs.name}: {value} {obs.unit or ''}".strip(),
+                    type="alert",
+                    data={
+                        "document_id": document.id,
+                        "observation_id": obs.id,
+                        "name": obs.name,
+                        "status": obs.status,
+                    },
+                    dedupe_key=f"alert:{document.user_id}:{document.id}:{obs.name}",
+                )
+        except Exception:
+            logger.exception("Failed to create extraction notifications for document %d", document.id)
 
         logger.info(
             "Extraction completed: document_id=%d, words=%d, chunks=%d, time=%.0fms",
@@ -493,6 +581,11 @@ def delete_document(document_id: int, user_id: int) -> Dict[str, Any]:
                 "error_code": DocumentErrorCode.DOCUMENT_NOT_FOUND.value,
             }
 
+        # Capture details for the "document deleted" notification before removal.
+        doc_filename = document.original_filename
+        doc_id = document.id
+        doc_user_id = document.user_id
+
         # 1. Delete files
         user_storage = os.path.join(DOCUMENT_STORAGE_PATH, str(user_id))
         originals_dir = os.path.join(user_storage, "originals")
@@ -514,6 +607,19 @@ def delete_document(document_id: int, user_id: int) -> Dict[str, Any]:
         session.commit()
 
         logger.info("Document deleted: id=%d, user=%d", document_id, user_id)
+
+        try:
+            from services.notification_service import create_notification
+            create_notification(
+                doc_user_id,
+                title="Document deleted",
+                message=doc_filename,
+                type="document",
+                data={"document_id": doc_id},
+                dedupe_key=f"delete:{doc_user_id}:{doc_id}",
+            )
+        except Exception:
+            logger.exception("Failed to create delete notification for document %d", doc_id)
 
         return {
             "success": True,
@@ -562,6 +668,8 @@ def _document_to_dict(document: Document) -> Dict[str, Any]:
         "word_count": doc_meta.get("word_count"),
         "page_count": doc_meta.get("page_count"),
         "metadata": doc_meta,
+        "extracted_text": document.extracted_text,
+        "text_chunks": document.text_chunks,
         "error_code": document.error_code,
         "error_message": document.error_message,
     }

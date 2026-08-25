@@ -132,7 +132,7 @@ class LLMService:
             logger.error(f"LLM streaming failed: {e}")
             raise RuntimeError(f"LLM streaming failed: {e}")
 
-    async def chat(
+    async def chat_async(
         self,
         messages: list[dict],
         model: Optional[str] = None,
@@ -140,6 +140,11 @@ class LLMService:
     ) -> str | AsyncGenerator[str, None]:
         """
         Chat with LLM using message format.
+
+        NOTE: Named chat_async (not chat) because the sync compatibility
+        wrapper below (used by api/routes/llm.py) also defines `chat()` and
+        would otherwise shadow this async method — which is the method
+        analysis_service.py relies on for the Documents > Ask AI feature.
 
         Args:
             messages: List of message dicts with 'role' and 'content'
@@ -224,7 +229,7 @@ class LLMService:
         health_context: Optional[str] = None,
         preferred_language: Optional[str] = None,
     ) -> dict:
-        """Sync chat — builds messages list and delegates to async chat()."""
+        """Sync chat — builds messages list and delegates to async chat_async()."""
         # Use the multilingual system prompt with health context embedded
         system_prompt = get_multilingual_system_prompt(
             additional_context=health_context or "",

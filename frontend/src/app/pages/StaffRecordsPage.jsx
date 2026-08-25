@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import GlassCard from '../components/GlassCard';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -11,72 +11,82 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
-import { Search, Filter, Download, Eye } from 'lucide-react';
+import { Search, Filter, Download, Eye, RefreshCw, Inbox } from 'lucide-react';
 import { useLanguage } from '../i18n/LanguageContext';
+import { recordsService, staffService, exportsService } from '../services/api';
+
+// Fallback for browsers that don't trigger download via anchor click for blob responses
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 const StaffRecordsPage = () => {
   const { t } = useLanguage();
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Mock data for staff records
-  const records = [
-    {
-      id: 1,
-      recordId: 'REC001',
-      patientName: 'John Doe',
-      patientId: 'P001',
-      type: 'Consultation',
-      date: '2026-06-20',
-      status: 'completed',
-      assignedTo: 'Dr. Smith'
-    },
-    {
-      id: 2,
-      recordId: 'REC002',
-      patientName: 'Jane Smith',
-      patientId: 'P002',
-      type: 'Follow-up',
-      date: '2026-06-19',
-      status: 'pending',
-      assignedTo: 'Dr. Johnson'
-    },
-    {
-      id: 3,
-      recordId: 'REC003',
-      patientName: 'Bob Williams',
-      patientId: 'P003',
-      type: 'Lab Results',
-      date: '2026-06-18',
-      status: 'completed',
-      assignedTo: 'Lab Tech'
-    },
-    {
-      id: 4,
-      recordId: 'REC004',
-      patientName: 'Alice Johnson',
-      patientId: 'P004',
-      type: 'Prescription',
-      date: '2026-06-17',
-      status: 'completed',
-      assignedTo: 'Dr. Brown'
-    },
-    {
-      id: 5,
-      recordId: 'REC005',
-      patientName: 'Charlie Brown',
-      patientId: 'P005',
-      type: 'Emergency',
-      date: '2026-06-16',
-      status: 'in-progress',
-      assignedTo: 'Dr. Davis'
-    }
-  ];
+  // Backend-driven state
+  const [records, setRecords] = useState([]);
+  const [assignedUsers, setAssignedUsers] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
-  const filteredRecords = records.filter(record =>
-    record.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    record.recordId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    record.patientId.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Map user_id -> username from /admin/staff/assigned
+  const userMap = useMemo(() => {
+    const map = {};
+    (Array.isArray(assignedUsers) ? assignedUsers : []).forEach((u) => {
+      map[u.id] = u.username;
+    });
+    return map;
+  }, [assignedUsers]);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const [recordsResult, assignedResult] = await Promise.allSettled([
+        recordsService.getAll({ search: searchTerm }),
+        staffService.getAssignedUsers(),
+      ]);
+      if (recordsResult.status === 'fulfilled') {
+        setRecords(Array.isArray(recordsResult.value) ? recordsResult.value : []);
+      } else {
+        setLoadError(recordsResult.reason?.response?.data?.detail || t('records.loadFailed'));
+      }
+      if (assignedResult.status === 'fulfilled') {
+        setAssignedUsers(Array.isArray(assignedResult.value) ? assignedResult.value : []);
+      }
+    } catch (err) {
+      setLoadError(err.response?.data?.detail || t('records.loadFailed'));
+      console.error('Failed to load staff records', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSearch = () => {
+    loadData();
+  };
+
+  const handleExport = async () => {
+    try {
+      const blob = await exportsService.recordsCSV();
+      downloadBlob(blob, 'records.csv');
+    } catch (err) {
+      console.error('Failed to export records', err);
+    }
+  };
 
   const getStatusBadge = (status) => {
     const styles = {
@@ -94,6 +104,42 @@ const StaffRecordsPage = () => {
     return status;
   };
 
+  // Derive "status" from record content: has data -> active, otherwise pending
+  const getRecordStatus = (record) => {
+    const hasData =
+      record.weight_kg != null ||
+      record.height_cm != null ||
+      record.calories != null ||
+      record.water_liters != null ||
+      record.sleep_hours != null ||
+      record.food ||
+      record.exercise;
+    return hasData ? 'completed' : 'pending';
+  };
+
+  const enrichedRecords = records.map((r) => ({
+    ...r,
+    patientName: userMap[r.user_id] || `User #${r.user_id}`,
+    status: getRecordStatus(r),
+  }));
+
+  const filteredRecords = enrichedRecords.filter((record) => {
+    if (!searchTerm.trim()) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      String(record.id).includes(term) ||
+      String(record.user_id).includes(term) ||
+      (record.patientName || '').toLowerCase().includes(term) ||
+      (record.record_date || '').toLowerCase().includes(term) ||
+      (record.food || '').toLowerCase().includes(term) ||
+      (record.exercise || '').toLowerCase().includes(term)
+    );
+  });
+
+  const totalRecords = records.length;
+  const completedCount = records.filter((r) => getRecordStatus(r) === 'completed').length;
+  const pendingCount = records.filter((r) => getRecordStatus(r) === 'pending').length;
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Page Header */}
@@ -105,6 +151,7 @@ const StaffRecordsPage = () => {
           </p>
         </div>
         <Button
+          onClick={handleExport}
           className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white shadow-lg"
         >
           <Download className="w-4 h-4 mr-2" />
@@ -121,9 +168,19 @@ const StaffRecordsPage = () => {
               placeholder={t('staffRecords.searchPlaceholder')}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               className="pl-10 backdrop-blur-sm bg-white/50 dark:bg-gray-800/50"
             />
           </div>
+          <Button
+            variant="outline"
+            onClick={loadData}
+            disabled={isLoading}
+            className="backdrop-blur-sm bg-white/50 dark:bg-gray-800/50"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            {t('common.retry')}
+          </Button>
           <Button variant="outline" className="backdrop-blur-sm bg-white/50 dark:bg-gray-800/50">
             <Filter className="w-4 h-4 mr-2" />
             {t('common.filters')}
@@ -135,24 +192,26 @@ const StaffRecordsPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <GlassCard className="p-6">
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{t('staffRecords.totalRecords')}</p>
-          <p className="text-3xl font-bold text-gray-900 dark:text-white">{records.length}</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white">
+            {isLoading ? '…' : totalRecords}
+          </p>
         </GlassCard>
         <GlassCard className="p-6">
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{t('staffRecords.completed')}</p>
           <p className="text-3xl font-bold text-green-600">
-            {records.filter(r => r.status === 'completed').length}
+            {isLoading ? '…' : completedCount}
           </p>
         </GlassCard>
         <GlassCard className="p-6">
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{t('staffRecords.pending')}</p>
           <p className="text-3xl font-bold text-yellow-600">
-            {records.filter(r => r.status === 'pending').length}
+            {isLoading ? '…' : pendingCount}
           </p>
         </GlassCard>
         <GlassCard className="p-6">
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{t('staffRecords.inProgress')}</p>
           <p className="text-3xl font-bold text-blue-600">
-            {records.filter(r => r.status === 'in-progress').length}
+            {isLoading ? '…' : 0}
           </p>
         </GlassCard>
       </div>
@@ -174,30 +233,55 @@ const StaffRecordsPage = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredRecords.map((record) => (
-                <TableRow key={record.id} className="border-gray-200/50 dark:border-gray-700/50">
-                  <TableCell className="font-medium">{record.recordId}</TableCell>
-                  <TableCell>{record.patientId}</TableCell>
-                  <TableCell>{record.patientName}</TableCell>
-                  <TableCell>{record.type}</TableCell>
-                  <TableCell>{new Date(record.date).toLocaleDateString()}</TableCell>
-                  <TableCell>{record.assignedTo}</TableCell>
-                  <TableCell>
-                    <Badge className={getStatusBadge(record.status)}>
-                      {getStatusLabel(record.status)}
-                    </Badge>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-gray-400">
+                    {t('common.loading')}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 p-0"
-                    >
-                      <Eye className="w-4 h-4" />
+                </TableRow>
+              ) : loadError ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-10">
+                    <p className="text-red-600 dark:text-red-400 mb-3">{loadError}</p>
+                    <Button variant="outline" onClick={loadData} className="mx-auto">
+                      {t('common.retry')}
                     </Button>
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : filteredRecords.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-gray-400">
+                    <Inbox className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    {t('records.noRecords')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredRecords.map((record) => (
+                  <TableRow key={record.id} className="border-gray-200/50 dark:border-gray-700/50">
+                    <TableCell className="font-medium">REC{String(record.id).padStart(3, '0')}</TableCell>
+                    <TableCell>P{String(record.user_id).padStart(3, '0')}</TableCell>
+                    <TableCell>{record.patientName}</TableCell>
+                    <TableCell>{record.food || record.exercise || '—'}</TableCell>
+                    <TableCell>{new Date(record.record_date).toLocaleDateString()}</TableCell>
+                    <TableCell>{userMap[record.user_id] ? 'Assigned' : '—'}</TableCell>
+                    <TableCell>
+                      <Badge className={getStatusBadge(record.status)}>
+                        {getStatusLabel(record.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                        aria-label={t('common.view')}
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>
@@ -207,3 +291,4 @@ const StaffRecordsPage = () => {
 };
 
 export default StaffRecordsPage;
+

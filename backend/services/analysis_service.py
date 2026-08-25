@@ -39,6 +39,51 @@ class AnalysisService:
         self.cache = cache_manager
         self.default_model = DEFAULT_LLM_MODEL
 
+    def _log_llm_context(
+        self,
+        document,
+        chunks: list,
+        selected_chunks: list,
+        final_prompt: str,
+        model: str,
+        analysis_type: str,
+    ) -> None:
+        """Debug-log exactly what will be sent to the LLM (no secrets logged).
+
+        Shows document id/filename, extracted word count, chunk counts,
+        selected chunk indexes + page numbers, a short snippet of each selected
+        chunk, the final prompt length, and the model. Used to verify that the
+        LLM receives the correct document text.
+        """
+        extracted = document.extracted_text or ""
+        logger.info(
+            "LLM context: document_id=%s filename=%s analysis_type=%s "
+            "extracted_words=%d total_chunks=%d selected_chunks=%d "
+            "prompt_chars=%d model=%s",
+            getattr(document, "id", "?"),
+            getattr(document, "original_filename", "?"),
+            analysis_type,
+            len(extracted.split()),
+            len(chunks),
+            len(selected_chunks),
+            len(final_prompt),
+            model,
+        )
+        if selected_chunks:
+            logger.info(
+                "LLM context: selected chunk indexes=%s page_numbers=%s",
+                [c.get("chunk_index") for c in selected_chunks],
+                [c.get("page_number") for c in selected_chunks],
+            )
+            for c in selected_chunks:
+                snippet = (c.get("text") or "")[:300].replace("\n", " ")
+                logger.info(
+                    "LLM context chunk %s (page %s): %s",
+                    c.get("chunk_index"),
+                    c.get("page_number"),
+                    snippet,
+                )
+
     async def analyze_document(
         self,
         document_id: int,
@@ -159,12 +204,18 @@ class AnalysisService:
                 preferred_language=preferred_language or "",
             )
 
+            # 10. Log the exact context that will be sent to the LLM
+            self._log_llm_context(
+                document, chunks, selected_chunks, final_prompt,
+                self.default_model, analysis_type,
+            )
+
             # 10. Call LLM
             logger.info(f"Generating analysis: document={document_id}, type={analysis_type}, model={self.default_model}")
             start_time = time.time()
 
             try:
-                response = await self.llm.chat(
+                response = await self.llm.chat_async(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": final_prompt},
@@ -209,7 +260,7 @@ class AnalysisService:
                 llm_model=self.default_model,
                 prompt_hash=prompt_hash,
                 citations=json.dumps(citations),
-                generated_at=datetime.now(timezone.utc).isoformat(),
+                generated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 user_id=user_id,
             )
             session.add(analysis)
@@ -397,20 +448,32 @@ class AnalysisService:
                 preferred_language=preferred_language or "",
             )
 
+            # 10. Log the exact context that will be sent to the LLM
+            self._log_llm_context(
+                document, chunks, selected_chunks, final_prompt,
+                self.default_model, analysis_type,
+            )
+
             # 10. Call LLM with streaming
             logger.info(f"Generating streaming analysis: document={document_id}, type={analysis_type}, model={self.default_model}")
             start_time = time.time()
 
             accumulated_response = ""
             try:
-                async for chunk in self.llm.chat(
+                # NOTE: chat_async() is an async def (returns a coroutine),
+                # not an async generator — it must be awaited before iterating.
+                # Calling it without `await` yielded a coroutine and made
+                # `async for` raise: "'async for' requires an object with
+                # __aiter__ method, got coroutine".
+                stream = await self.llm.chat_async(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": final_prompt},
                     ],
                     model=self.default_model,
                     stream=True,
-                ):
+                )
+                async for chunk in stream:
                     accumulated_response += chunk
                     # Check for client disconnect
                     if request is not None:
@@ -459,7 +522,7 @@ class AnalysisService:
                 llm_model=self.default_model,
                 prompt_hash=prompt_hash,
                 citations=json.dumps(citations),
-                generated_at=datetime.now(timezone.utc).isoformat(),
+                generated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 user_id=user_id,
             )
             session.add(analysis)

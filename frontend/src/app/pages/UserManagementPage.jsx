@@ -74,26 +74,50 @@ const UserManagementPage = () => {
 
 
   const handleEdit = (user) => {
-    // TODO: Backend update endpoint for /admin/users is not implemented in this repo.
-    toast.error(t('userMgmt.editNotImplemented'));
-    console.warn('Edit TODO: backend update endpoint not implemented');
+    // Populate form for editing
+    setSelectedUser(user);
+    setFormData({
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      password: '',
+    });
+    setIsDialogOpen(true);
   };
 
-  const handleDelete = async (id) => {
-    // TODO: Backend does not expose admin DELETE /admin/users in this repo.
-    // Keep action disabled until the endpoint exists.
-    toast.error(t('userMgmt.deleteNotImplemented'));
-    console.warn('Delete TODO: backend DELETE /admin/users not implemented');
+const handleDelete = async (id) => {
+    if (!window.confirm(t('userMgmt.deleteConfirm'))) return;
+    try {
+      await usersService.delete(id);
+      toast.success(t('userMgmt.deleted'));
+      await loadUsers();
+    } catch (err) {
+      console.error('Delete user failed', err);
+      toast.error(err.response?.data?.detail || t('userMgmt.deleteFailed'));
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
       if (selectedUser) {
-        // TODO: Backend does not expose admin update in this repo.
-        // Keep UI action disabled until endpoint exists.
-        toast.error(t('userMgmt.editNotImplemented'));
-        console.warn('Edit TODO: backend update endpoint not implemented');
+        // PUT /admin/users/{id} expects: { username, role }
+        const payload = {
+          username: (formData.username || '').trim(),
+          role:
+            formData.role === 'admin'
+              ? 'Admin'
+              : formData.role === 'staff'
+                ? 'Staff'
+                : 'User',
+        };
+        await usersService.update(selectedUser.id, payload);
+        toast.success(t('userMgmt.updated'));
+
+        await loadUsers();
+        handleCloseDialog();
         return;
       }
 
@@ -118,8 +142,8 @@ const UserManagementPage = () => {
       await loadUsers();
       handleCloseDialog();
     } catch (err) {
-      console.error('Create user failed', err);
-      toast.error(t('userMgmt.createFailed'));
+      console.error('User save failed', err);
+      toast.error(err.response?.data?.detail || t('userMgmt.createFailed'));
     }
   };
 

@@ -13,7 +13,18 @@ __pycache__/
 
 # Environment variables
 .env
+.env.*
 backend/.env
 
 # Database
 *.db
+*.sqlite
+*.sqlite3
+
+# Uploaded files / generated content
+backend/storage/
+frontend/dist/
+
+# Docker
+*.pid
+

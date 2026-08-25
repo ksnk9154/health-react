@@ -1,8 +1,11 @@
 import { Navigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
 
-const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
+// ProtectedRoute optionally enforces a role requirement on top of authentication.
+// requiredRole may be a single role string (e.g. "Admin") or an array (e.g. ["Admin", "Staff"]).
+// Role comparison is case-insensitive to match both "Admin" (backend) and "admin" (frontend) spellings.
+const ProtectedRoute = ({ children, requiredRole }) => {
+  const { user, isAuthenticated, loading } = useAuth();
 
   if (loading) {
     return (
@@ -17,6 +20,16 @@ const ProtectedRoute = ({ children }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Optional role-based access control
+  if (requiredRole) {
+    const allowed = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+    const userRole = (user?.role || '').toLowerCase();
+    const hasRole = allowed.some((role) => role.toLowerCase() === userRole);
+    if (!hasRole) {
+      return <Navigate to="/home" replace />;
+    }
   }
 
   return children;

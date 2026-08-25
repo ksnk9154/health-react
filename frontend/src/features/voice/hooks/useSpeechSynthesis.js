@@ -38,32 +38,60 @@ export default function useSpeechSynthesis(options = {}) {
 
   const utteranceRef = useRef(null);
   const speakingRef = useRef(false);
+  const cancelledRef = useRef(false);
 
-  // Detect browser support and load voices
+  // Detect browser support and load voices (with retry).
+  // On some browsers/Android WebView, getVoices() returns [] on the first call
+  // and the "voiceschanged" event never fires, so we also poll a few times.
   useEffect(() => {
-    const supported = 'speechSynthesis' in window;
+    const supported =
+      typeof window !== 'undefined' &&
+      'speechSynthesis' in window &&
+      typeof window.SpeechSynthesisUtterance !== 'undefined';
     setIsSupported(supported);
 
     if (!supported) return;
 
-    // Load voices (they may be loaded asynchronously)
-    const loadVoices = () => {
-      const availableVoices = window.speechSynthesis.getVoices();
-      if (availableVoices.length > 0) {
-        setVoices(availableVoices);
-        // Set default voice to first English voice if none selected
-        if (!selectedVoice) {
-          const englishVoice = availableVoices.find((v) => v.lang.startsWith('en'));
-          if (englishVoice) {
-            setSelectedVoice(englishVoice);
-          }
-        }
-      }
+    let retries = 0;
+    const MAX_RETRIES = 30; // ~1.5s total of polling
+
+    const applyVoices = (available) => {
+      if (!available || available.length === 0) return;
+      setVoices(available);
+      // Revalidate the currently selected voice. If it no longer exists we drop
+      // it so the browser falls back to its system default instead of silently
+      // failing on an unavailable voice.
+      setSelectedVoice((current) => {
+        if (!current) return null;
+        const stillExists = available.some(
+          (v) => v.name === current.name && v.lang === current.lang
+        );
+        return stillExists ? current : null;
+      });
     };
 
-    loadVoices();
+    const loadVoices = () => {
+      const available = window.speechSynthesis.getVoices();
+      if (available && available.length > 0) {
+        applyVoices(available);
+        return true;
+      }
+      return false;
+    };
 
-    // Chrome loads voices asynchronously; listen for the voiceschanged event
+    let loaded = loadVoices();
+    if (!loaded) {
+      const timer = setInterval(() => {
+        retries += 1;
+        loaded = loadVoices();
+        if (loaded || retries >= MAX_RETRIES) {
+          clearInterval(timer);
+        }
+      }, 50);
+      return () => clearInterval(timer);
+    }
+
+    // Chrome loads voices asynchronously; listen for the voiceschanged event.
     if (window.speechSynthesis.onvoiceschanged !== undefined) {
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
@@ -86,15 +114,27 @@ export default function useSpeechSynthesis(options = {}) {
     (text) => {
       if (!isSupported || !text) return;
 
+      const synth = window.speechSynthesis;
       // Cancel any ongoing speech first
-      window.speechSynthesis.cancel();
+      synth.cancel();
       speakingRef.current = false;
+      cancelledRef.current = false;
       setIsSpeaking(false);
 
       // Split long text into sentences for more natural pauses
-      const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
+      const sentences = String(text).match(/[^.!?\n]+[.!?\n]*/g) || [String(text)];
+      if (sentences.length === 0) return;
+
+      // Only assign a voice if it is actually still available, otherwise let the
+      // browser use its system default (more reliable across devices/Android).
+      const voiceToUse =
+        selectedVoice &&
+        voices.some((v) => v.name === selectedVoice.name && v.lang === selectedVoice.lang)
+          ? selectedVoice
+          : null;
 
       const speakNext = (index) => {
+        if (cancelledRef.current) return;
         if (index >= sentences.length) {
           speakingRef.current = false;
           setIsSpeaking(false);
@@ -102,37 +142,46 @@ export default function useSpeechSynthesis(options = {}) {
         }
 
         const utterance = new SpeechSynthesisUtterance(sentences[index].trim());
-        if (selectedVoice) utterance.voice = selectedVoice;
+        if (voiceToUse) utterance.voice = voiceToUse;
         utterance.rate = currentRate;
         utterance.pitch = currentPitch;
+        utterance.lang = voiceToUse ? voiceToUse.lang : utterance.lang || 'en-US';
 
         utterance.onstart = () => {
+          if (cancelledRef.current) return;
           speakingRef.current = true;
           setIsSpeaking(true);
         };
 
         utterance.onend = () => {
-          speakNext(index + 1);
+          if (cancelledRef.current) return;
+          // Small delay between sentences avoids a known Chromium/Android bug
+          // where utterances queued back-to-back (or right after cancel())
+          // are silently dropped.
+          setTimeout(() => speakNext(index + 1), 60);
         };
 
         utterance.onerror = (event) => {
-          // Don't treat cancel as an error
-          if (event.error !== 'canceled' && event.error !== 'interrupted') {
-            console.warn('Speech synthesis error:', event.error);
+          // Don't treat cancel/interrupt as a real error.
+          if (event.error === 'canceled' || event.error === 'interrupted') {
+            speakNext(index + 1);
+            return;
           }
-          speakNext(index + 1);
+          console.warn('Speech synthesis error:', event.error);
+          setTimeout(() => speakNext(index + 1), 60);
         };
 
         utteranceRef.current = utterance;
-        window.speechSynthesis.speak(utterance);
+        synth.speak(utterance);
       };
 
       speakNext(0);
     },
-    [isSupported, selectedVoice, currentRate, currentPitch],
+    [isSupported, selectedVoice, voices, currentRate, currentPitch],
   );
 
   const cancel = useCallback(() => {
+    cancelledRef.current = true;
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }

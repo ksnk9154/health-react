@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  GitHub Actions — Deploy frontend to GitHub Pages (FREE, no credit card)
+#  Automatically builds the Vite/React SPA and publishes to GitHub Pages.
+#  Triggered on every push to main.
+# ──────────────────────────────────────────────────────────────────────────────
+name: Deploy Frontend → GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "backend/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Setup Node.js + pnpm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # 4. Build
+      - name: Build production bundle
+        working-directory: frontend
+        run: pnpm build
+        env:
+          # Point the frontend at your deployed backend API
+          # (set VITE_API_URL in GitHub repo settings → Secrets and variables)
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://your-backend.onrender.com' }}
+
+      # 5. Upload artifact
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      # 6. Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

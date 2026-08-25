@@ -38,6 +38,7 @@ export default function useSpeechRecognition(options = {}) {
 
   const recognitionRef = useRef(null);
   const finalTranscriptRef = useRef('');
+  const interimTranscriptRef = useRef('');
 
   // Detect browser support once on mount
   useEffect(() => {
@@ -75,6 +76,7 @@ export default function useSpeechRecognition(options = {}) {
       } catch {
         // ignore
       }
+      recognitionRef.current = null;
     }
 
     const recognition = new SpeechRecognition();
@@ -82,6 +84,60 @@ export default function useSpeechRecognition(options = {}) {
     recognition.continuous = continuous;
     recognition.interimResults = interimResults;
     recognition.maxAlternatives = 1;
+
+    // Nothing to emit until we have real text
+    setTranscript('');
+    setInterimTranscript('');
+    finalTranscriptRef.current = '';
+    interimTranscriptRef.current = '';
+
+    // Silence / safety timers so recognition can never hang in "loading".
+    let silenceTimer = null;
+    let maxDurationTimer = null;
+    const clearTimers = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (maxDurationTimer) clearTimeout(maxDurationTimer);
+      silenceTimer = null;
+      maxDurationTimer = null;
+    };
+
+    const scheduleSilenceStop = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      // ~3.5s with no new audio/result => user has finished speaking, so stop
+      // so onend() finalizes the result. (Long enough to allow natural pauses
+      // between words/sentences without turning the mic off mid-speech.)
+      silenceTimer = setTimeout(() => {
+        try {
+          recognition.stop();
+        } catch {
+          // ignore
+        }
+      }, 3500);
+    };
+
+    const finalizeOnStop = () => {
+      clearTimers();
+      // If the engine never delivered a final result (happens on some
+      // browsers/Android), promote the latest interim text so we don't lose it.
+      if (!finalTranscriptRef.current && interimTranscriptRef.current) {
+        finalTranscriptRef.current = interimTranscriptRef.current.trim();
+        setTranscript(finalTranscriptRef.current);
+      }
+      setInterimTranscript('');
+      interimTranscriptRef.current = '';
+    };
+
+    recognition.onstart = () => {
+      // Safety cap: never allow a single session to run longer than 15s.
+      maxDurationTimer = setTimeout(() => {
+        try {
+          recognition.stop();
+        } catch {
+          // ignore
+        }
+      }, 15000);
+      scheduleSilenceStop();
+    };
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -100,31 +156,37 @@ export default function useSpeechRecognition(options = {}) {
         finalTranscriptRef.current +=
           (finalTranscriptRef.current ? ' ' : '') + final;
         setTranscript(finalTranscriptRef.current);
+        interimTranscriptRef.current = '';
+        setInterimTranscript('');
+
+        // If not continuous, stop after first final result (onend will fire).
+        if (!continuous) {
+          try {
+            recognition.stop();
+          } catch {
+            // ignore
+          }
+          return;
+        }
       }
 
       if (interim) {
+        interimTranscriptRef.current = interim;
         setInterimTranscript(interim);
       } else {
         setInterimTranscript('');
       }
 
-      // If not continuous, stop listening after first final result
-      if (!continuous && final) {
-        try {
-          recognition.stop();
-        } catch {
-          // ignore
-        }
-      }
+      scheduleSilenceStop();
     };
 
     recognition.onerror = (event) => {
       if (event.error === 'no-speech') {
-        // No speech detected — this is common, don't treat as hard error
+        // No speech detected — common, don't treat as a hard error.
         return;
       }
       if (event.error === 'aborted') {
-        // User or component stopped — ignore
+        // User or component stopped — ignore.
         return;
       }
       setError(`Speech recognition error: ${event.error}`);
@@ -132,12 +194,13 @@ export default function useSpeechRecognition(options = {}) {
     };
 
     recognition.onend = () => {
+      finalizeOnStop();
       setIsListening(false);
+      recognitionRef.current = null;
     };
 
     recognition.onspeechend = () => {
-      // If continuous, don't stop; the onend handler will fire when recognition
-      // actually stops.
+      // If continuous, don't stop; onend fires when recognition actually stops.
       if (!continuous) {
         try {
           recognition.stop();
@@ -153,6 +216,7 @@ export default function useSpeechRecognition(options = {}) {
       setError(null);
       recognitionRef.current = recognition;
     } catch (err) {
+      clearTimers();
       setError(`Failed to start speech recognition: ${err.message}`);
       setIsListening(false);
     }
@@ -172,6 +236,7 @@ export default function useSpeechRecognition(options = {}) {
 
   const resetTranscript = useCallback(() => {
     finalTranscriptRef.current = '';
+    interimTranscriptRef.current = '';
     setTranscript('');
     setInterimTranscript('');
     setError(null);

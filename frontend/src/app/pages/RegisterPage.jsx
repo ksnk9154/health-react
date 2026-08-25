@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
+import { authService } from '../services/api';
 import { Moon, Sun, Lock, User, Heart, Mail, Globe } from 'lucide-react';
 import {
   DropdownMenu,
@@ -54,20 +55,7 @@ const RegisterPage = () => {
 
     setLoading(true);
     try {
-const res = await fetch(`${import.meta.env.VITE_API_URL || 'https://health-react-aoax.onrender.com'}/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ username: username.trim(), password })
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        toast.error(data?.detail || data?.error || 'Registration failed');
-        return;
-      }
+      await authService.register(username.trim(), password);
 
       toast.success(t('register.success'));
 

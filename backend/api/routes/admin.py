@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from api.deps import get_current_user, require_role
-from services.admin import list_users as svc_list_users, create_user, assign_staff_to_user
+from services.admin import list_users as svc_list_users, create_user, update_user, delete_user, assign_staff_to_user
 from services.staff import list_assigned_users
 from services.analytics import get_user_scope_user_ids
 
@@ -80,4 +80,42 @@ def assign_staff(req: AssignStaffRequest, current_user=Depends(require_role({"Ad
 @router.get("/staff/assigned", summary="List users assigned to current staff")
 def staff_assigned_endpoint(current_user=Depends(require_role({"Admin", "Staff"}))):
     return list_assigned_users(current_user)
+
+
+class UserUpdateRequest(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+
+@router.put("/users/{user_id}", summary="Update user (Admin only)")
+def update_user_endpoint(
+    user_id: int,
+    req: UserUpdateRequest,
+    current_user=Depends(require_role({"Admin"})),
+):
+    if req.username is None and req.role is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
+
+    try:
+        ok = update_user(user_id, username=req.username, role=req.role)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete("/users/{user_id}", summary="Delete user (Admin only)")
+def delete_user_endpoint(
+    user_id: int,
+    current_user=Depends(require_role({"Admin"})),
+):
+    # Prevent admin from deleting themselves
+    if current_user["id"] == user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete yourself")
+
+    ok = delete_user(user_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return {"ok": True}
 

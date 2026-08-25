@@ -1,9 +1,15 @@
 import { Capacitor } from '@capacitor/core';
 
 // API base URL
-// - Android Emulator (Capacitor): http://10.0.2.2:8000
-// - Web browser: use localhost PC (default http://127.0.0.1:8000)
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://health-react-aoax.onrender.com';
+// - Android Emulator (Capacitor): http://10.0.2.2:8000 (host loopback from the emulator)
+// - Web browser: use the configured VITE_API_URL. Dev default is the local FastAPI
+//   backend (http://127.0.0.1:8000). NOTE: we intentionally DON'T fall back to the
+//   deployed frontend host here — that host serves the SPA (index.html), not a JSON
+//   API, so hitting it causes "Invalid response"/"200.js" style errors.
+const isNative = Capacitor.isNativePlatform();
+const API_BASE_URL = isNative
+  ? 'http://10.0.2.2:8000'
+  : (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000');
 
 
 
@@ -60,12 +66,44 @@ const fetchAPI = async (endpoint, options = {}) => {
 
     const response = await fetch(url, config);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-      throw { response: { data: error, status: response.status } };
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.toLowerCase().includes('application/json');
+
+    // Read the body once, tolerating non-JSON (e.g. an HTML SPA page returned by
+    // the wrong origin/path). Never let that crash the app.
+    const raw = await response.text().catch(() => '');
+    let data = {};
+    if (isJson && raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { detail: 'Invalid JSON response from server' };
+      }
+    } else if (raw) {
+      data = { detail: raw.slice(0, 200) || 'Unexpected (non-JSON) response' };
     }
 
-    return await response.json();
+    if (!response.ok) {
+      throw {
+        response: {
+          data: (data && data.detail) ? data : { detail: 'Request failed' },
+          status: response.status,
+        },
+      };
+    }
+
+    // Success status (2xx) but the body wasn't JSON — this is not a valid API
+    // response (e.g. the request hit a static host returning index.html).
+    if (!isJson) {
+      throw {
+        response: {
+          data: { detail: 'Invalid response from server' },
+          status: response.status,
+        },
+      };
+    }
+
+    return data;
   } catch (error) {
     throw error;
   }
@@ -158,6 +196,21 @@ export const authService = {
     });
   },
 
+  register: async (username, password) => {
+    return fetchAPI('/auth/register', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ username, password })
+    });
+  },
+
+  changePassword: async (current_password, new_password) => {
+    return fetchAPI('/auth/change-password', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ current_password, new_password })
+    });
+  },
 
   getCurrentUser: async () => {
     return fetchAPI('/auth/me');
@@ -233,23 +286,65 @@ export const recordsService = {
   }
 };
 
-// Analytics API
-export const analyticsService = {
-  getDashboardStats: async () => {
-    return fetchAPI('/analytics/dashboard');
+// Admin Analytics API
+// Backend endpoints: GET /admin/dashboard, /admin/stats, /admin/analytics, /admin/recent-activity
+export const adminAnalyticsService = {
+  getDashboard: async () => {
+    return fetchAPI('/admin/dashboard');
   },
 
-  getActivityLog: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return fetchAPI(`/analytics/activity${queryString ? `?${queryString}` : ''}`);
+  getStats: async () => {
+    return fetchAPI('/admin/stats');
   },
 
-  getChartData: async (type) => {
-    return fetchAPI(`/analytics/charts/${type}`);
+  getAnalytics: async () => {
+    return fetchAPI('/admin/analytics');
+  },
+
+  getRecentActivity: async () => {
+    return fetchAPI('/admin/recent-activity');
   }
 };
 
-// Settings API
+// Staff API
+// Backend endpoint: GET /admin/staff/assigned
+export const staffService = {
+  getAssignedUsers: async () => {
+    return fetchAPI('/admin/staff/assigned');
+  }
+};
+
+// Exports API
+// Backend endpoints: GET /exports/records.csv, GET /exports/records.xlsx
+export const exportsService = {
+  recordsCSV: async () => {
+    const token = localStorage.getItem('access_token');
+    const response = await fetch(`${API_BASE_URL}/exports/records.csv`, {
+      method: 'GET',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw { response: { data: error, status: response.status } };
+    }
+    return response.blob();
+  },
+
+  recordsXLSX: async () => {
+    const token = localStorage.getItem('access_token');
+    const response = await fetch(`${API_BASE_URL}/exports/records.xlsx`, {
+      method: 'GET',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw { response: { data: error, status: response.status } };
+    }
+    return response.blob();
+  }
+};
+
+// Settings API (backend: GET/PUT /settings)
 export const settingsService = {
   get: async () => {
     return fetchAPI('/settings');
@@ -259,6 +354,20 @@ export const settingsService = {
     return fetchAPI('/settings', {
       method: 'PUT',
       body: JSON.stringify(settings)
+    });
+  }
+};
+
+// Profile API (backend: GET/PUT /profile)
+export const profileService = {
+  get: async () => {
+    return fetchAPI('/profile');
+  },
+
+  update: async (profile) => {
+    return fetchAPI('/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profile)
     });
   }
 };
@@ -393,4 +502,30 @@ export const documentService = {
   askQuestionStream: (documentId, question, onEvent, signal, language = null) => {
     return _streamAnalysis(`/api/v1/documents/${documentId}/question/stream`, { question, language }, onEvent, signal);
   }
+};
+
+export const healthOverviewService = { get: () => fetchAPI('/api/v1/health-overview/') };
+export const healthObservationService = { list: (params = {}) => { const q = new URLSearchParams(params).toString(); return fetchAPI(`/api/v1/health-observations/${q ? `?${q}` : ''}`); } };
+export const weightGoalService = { get: () => fetchAPI('/api/v1/weight-goal/'), save: (goal) => fetchAPI('/api/v1/weight-goal/', { method: 'PUT', headers: getJsonHeaders(), body: JSON.stringify(goal) }) };
+
+// Notification API — user-scoped. Backend endpoints:
+//   GET  /api/notifications/              -> { items, total, unread_count }
+//   POST /api/notifications/{id}/read     -> { success }
+//   POST /api/notifications/mark-all-read -> { success, updated }
+export const notificationService = {
+  list: async (limit = 50, unreadOnly = null) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (unreadOnly != null) params.set('unread_only', String(unreadOnly));
+    return fetchAPI(`/api/notifications/?${params.toString()}`);
+  },
+  markRead: async (id) =>
+    fetchAPI(`/api/notifications/${id}/read`, {
+      method: 'POST',
+      headers: getJsonHeaders(),
+    }),
+  markAllRead: async () =>
+    fetchAPI('/api/notifications/mark-all-read', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+    }),
 };

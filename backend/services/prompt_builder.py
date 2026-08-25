@@ -17,11 +17,34 @@ MAX_CONTEXT_TOKENS = int(os.environ.get("ANALYSIS_MAX_CONTEXT_TOKENS", 4000))
 MAX_RESPONSE_TOKENS = int(os.environ.get("ANALYSIS_MAX_RESPONSE_TOKENS", 1000))
 
 
+# Strict source-only rule for medical values. Prevents the LLM from inventing
+# test results, moving a number between tests, or classifying results as
+# high/low/normal without explicit support in the document text.
+SOURCE_ONLY_RULE = (
+    "SOURCE-ONLY RULE:\n"
+    "Use only information explicitly present in the supplied document.\n\n"
+    "For every medical test result:\n"
+    "- Do not invent or infer a value.\n"
+    "- Do not move a value from one test to another.\n"
+    "- Do not assume a result from a reference range.\n"
+    "- Do not classify a result as high/low/normal unless the document "
+    "explicitly provides enough information to support that classification.\n"
+    "- If the value is unclear because of document formatting, say: "
+    '"The result could not be reliably determined from the extracted text."'
+)
+
+
 # Prompt templates
 PROMPT_TEMPLATES = {
     "SUMMARY": """You are a medical document assistant. Summarize the following document in 3-5 bullet points.
 Focus on key findings, diagnoses, medications, and recommendations.
 Use clear, concise language.
+
+IMPORTANT: Base your summary ONLY on the document text provided below in the Document section.
+Do NOT use outside knowledge or guess the document topic. Do not invent document content.
+If the provided text is insufficient, unclear, or empty, state that explicitly instead of fabricating details.
+
+{source_only_rule}
 
 Document:
 {document_text}
@@ -31,6 +54,12 @@ Summary:""",
     "EXPLANATION": """You are a medical document assistant. Explain the following document in simple, patient-friendly language.
 Avoid medical jargon and explain any necessary terms in plain English.
 Be empathetic and clear.
+
+IMPORTANT: Base your explanation ONLY on the document text provided below in the Document section.
+Do NOT use outside knowledge or guess the document topic. Do not invent document content.
+If the provided text is insufficient, unclear, or empty, state that explicitly instead of fabricating details.
+
+{source_only_rule}
 
 Document:
 {document_text}
@@ -55,6 +84,15 @@ For each test result:
 3. Suggest possible causes (do not diagnose)
 
 IMPORTANT: This is educational information only. Always recommend consulting a qualified healthcare professional for diagnosis or treatment decisions.
+
+{source_only_rule}
+
+VERIFIED VALUES:
+Before explaining, reproduce ONLY the values you could clearly read from the document as a markdown table:
+| Test | Result | Unit | Bio. Ref. Interval |
+- If a value, unit, or reference range is missing or ambiguous in the extracted text, write "(not clearly present in the document)".
+- Do NOT fill in a value from memory or infer it from another test.
+- The layout of the document may use columns (Test Name | Results | Units | Bio. Ref. Interval). Match each number to its column.
 
 Lab Report:
 {document_text}
@@ -169,6 +207,7 @@ class PromptBuilder:
                 document_text=safe_document_text,
                 context_chunks=context_chunks,
                 question=safe_question,
+                source_only_rule=SOURCE_ONLY_RULE,
             )
         except KeyError as e:
             logger.error(f"Template formatting error: {e}")
@@ -234,12 +273,19 @@ class PromptBuilder:
         analysis_instructions = {
             "SUMMARY": (
                 "You are a medical document assistant that provides concise, accurate summaries. "
-                "This is your primary task: summarize the document given by the user."
+                "This is your primary task: summarize the document given by the user. "
+                "You must summarize ONLY the document text provided in the Document section. "
+                "Do not use outside knowledge to invent document content. If the supplied text "
+                "is insufficient or unclear, explicitly say so. Do not assume the document topic. "
+                "Follow the SOURCE-ONLY RULE for any medical test values."
             ),
             "EXPLANATION": (
                 "You are a medical document assistant that explains complex medical information "
                 "in simple, patient-friendly language. This is your primary task: explain the "
-                "document given by the user in the user's language."
+                "document given by the user in the user's language. Explain ONLY the document text "
+                "provided in the Document section. Do not use outside knowledge to invent document "
+                "content. If the supplied text is insufficient or unclear, explicitly say so. "
+                "Follow the SOURCE-ONLY RULE for any medical test values."
             ),
             "QA": (
                 "You are a medical document assistant that answers questions based on document "
@@ -249,7 +295,10 @@ class PromptBuilder:
             "LAB_REPORT": (
                 "You are a medical document assistant that explains lab reports in simple terms. "
                 "Always include medical disclaimers. This is your primary task: explain the lab "
-                "report given by the user in the user's language."
+                "report given by the user in the user's language. Follow the SOURCE-ONLY RULE: "
+                "report only values explicitly present in the document, never invent or infer "
+                "results, and never classify a result as high/low/normal without support in the "
+                "extracted text."
             ),
             "PRESCRIPTION": (
                 "You are a medical document assistant that explains prescriptions in simple terms. "

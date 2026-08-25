@@ -17,6 +17,28 @@ import NotFoundPage from './pages/NotFoundPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import DocumentsPage from '@/features/documents/pages/DocumentsPage';
 
+/**
+ * Resolve a Capacitor-safe router basename from the current location.
+ *
+ * In the packaged Android app (Capacitor local server) the SPA is served at
+ * the server root (`http://localhost`), so the basename must be `/`.
+ * On GitHub Pages the app lives under a sub-path (e.g. `/health-react`), so we
+ * keep that prefix. Deriving it from the live pathname lets a single build work
+ * in both contexts without hard-coding a deployment path.
+ */
+function resolveBasename() {
+  if (typeof window === 'undefined') return '/';
+  const { pathname } = window.location;
+  if (!pathname || pathname === '/') return '/';
+  if (pathname.endsWith('/')) {
+    // e.g. "/health-react/" → "/health-react" (root "/" is handled above)
+    return pathname.slice(0, -1);
+  }
+  // e.g. "/index.html" (Capacitor) → drop the trailing file segment → "/"
+  const trimmed = pathname.replace(/\/[^/]*$/, '');
+  return trimmed || '/';
+}
+
 export const router = createBrowserRouter(
   [
     {
@@ -40,13 +62,41 @@ export const router = createBrowserRouter(
       children: [
         { index: true, element: <Navigate to="/home" replace /> },
         { path: 'home', element: <HomePage /> },
-        { path: 'dashboard', element: <DashboardPage /> },
+        {
+          path: 'dashboard',
+          element: (
+            <ProtectedRoute requiredRole="Admin">
+              <DashboardPage />
+            </ProtectedRoute>
+          ),
+        },
         { path: 'records', element: <RecordsPage /> },
-        { path: 'analytics', element: <AnalyticsPage /> },
+        {
+          path: 'analytics',
+          element: (
+            <ProtectedRoute requiredRole="Admin">
+              <AnalyticsPage />
+            </ProtectedRoute>
+          ),
+        },
         { path: 'profile', element: <ProfilePage /> },
         { path: 'settings', element: <SettingsPage /> },
-        { path: 'admin/users', element: <UserManagementPage /> },
-        { path: 'staff/records', element: <StaffRecordsPage /> },
+        {
+          path: 'admin/users',
+          element: (
+            <ProtectedRoute requiredRole="Admin">
+              <UserManagementPage />
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: 'staff/records',
+          element: (
+            <ProtectedRoute requiredRole={['Staff', 'Admin']}>
+              <StaffRecordsPage />
+            </ProtectedRoute>
+          ),
+        },
         { path: 'llm', element: <LLMAssistantPage /> },
         { path: 'documents', element: <DocumentsPage /> },
       ],
@@ -57,7 +107,7 @@ export const router = createBrowserRouter(
     },
   ],
   {
-    basename: import.meta.env.BASE_URL,
+    basename: resolveBasename(),
   },
 );
 

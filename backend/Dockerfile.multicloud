@@ -1,0 +1,54 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  Dockerfile.multicloud — Single container: FastAPI backend **serving** the
+#  React/Vite frontend.  Useful when you want one deployable artifact
+#  (e.g. on Hugging Face Spaces, Fly.io, or Render.com free tier).
+#
+#  Unlike separate deploys, this avoids CORS entirely (same-origin).
+# ──────────────────────────────────────────────────────────────────────────────
+# Stage 1 — Build the frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /tmp/frontend
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN npm install -g pnpm@8 && pnpm install --frozen-lockfile
+COPY frontend/ ./
+# VITE_API_URL will be '' at build time — we rewrite the built files below
+# to replace the API origin with the runtime value via a small trick:
+# the frontend reads VITE_API_URL at build; we set it to a relative path
+# so it always hits the same origin (the backend container).
+ARG VITE_API_URL=""
+ENV VITE_API_URL=""
+RUN pnpm build
+
+# Stage 2 — Build the backend image
+FROM python:3.12-slim AS backend
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc libjpeg62-turbo zlib1g libpq-dev libmagic1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+RUN useradd --create-home --shell /bin/bash appuser
+WORKDIR /home/appuser/app
+
+COPY backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY backend/ ./backend/
+
+# Copy the built frontend into the backend's static directory
+RUN mkdir -p /home/appuser/app/backend/static /home/appuser/app/backend/storage/uploads
+COPY --from=frontend-builder /tmp/frontend/dist/ /home/appuser/app/backend/static/
+RUN chown -R appuser:appuser /home/appuser/app
+
+USER appuser
+
+ENV HEALTH_DB_PATH="/home/appuser/app/backend/health.db" \
+    DOCUMENT_STORAGE_PATH="/home/appuser/app/backend/storage/uploads" \
+    PYTHONUNBUFFERED="1" \
+    PYTHONDONTWRITEBYTECODE="1"
+
+EXPOSE 8000
+
+# Run migrations, then start uvicorn — FastAPI will serve both the API
+# and the static frontend.  See backend/api/main.py for the StaticFiles mount.
+CMD ["sh", "-c", "cd /home/appuser/app/backend && python db/migrate.py && python -m uvicorn api.main:app --host 0.0.0.0 --port 8000"]

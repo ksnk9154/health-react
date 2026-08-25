@@ -270,6 +270,19 @@ def get_multilingual_system_prompt(
     parts.append(MULTILINGUAL_SYSTEM_PROMPT)
 
     if additional_context:
-        parts.append(f"# User Health Context\n\n{additional_context}")
+        parts.append(
+            "# User Health Data (authoritative, provided by the application)\n\n"
+            "The block below is the CURRENT USER'S REAL health record data. It was "
+            "retrieved directly from the application's database for the authenticated "
+            "user. You HAVE access to it and are AUTHORIZED to use it.\n\n"
+            "You MUST answer questions about the user's own health using these records "
+            "and the specific values they contain (dates, weight, BMI, calories, water, "
+            "sleep, food, exercise, etc.).\n\n"
+            "If the user asks to see or retrieve their data, list the values from these "
+            "records rather than saying you cannot access their data.\n\n"
+            "If the block says no records are available, then state that no health "
+            "records are stored for the user yet.\n\n"
+            f"{additional_context}"
+        )
 
     return "\n\n".join(parts)

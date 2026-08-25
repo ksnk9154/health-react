@@ -12,17 +12,26 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { llmService } from '../services/api';
 import VoiceButton from '../../features/voice/components/VoiceButton';
 import AutoSpeakToggle from '../../features/voice/components/AutoSpeakToggle';
 import useSpeechSynthesis from '../../features/voice/hooks/useSpeechSynthesis';
 import { useLanguage } from '../i18n/LanguageContext';
+import MarkdownContent from '../components/MarkdownContent';
+import HealthOverview from '../components/HealthOverview';
+import HealthHistory from '../components/HealthHistory';
+import { healthOverviewService } from '../services/api';
+import { useNavigate } from 'react-router';
 
 const LLMAssistantPage = () => {
   const { t, language } = useLanguage();
+  const navigate = useNavigate();
   // Health status
   const [healthStatus, setHealthStatus] = useState(null);
+  const [overview, setOverview] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
 
   // Chat
@@ -30,6 +39,10 @@ const LLMAssistantPage = () => {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Voice (STT) feedback
+  const [voiceInterim, setVoiceInterim] = useState('');
+  const [voiceError, setVoiceError] = useState('');
 
   // Analyze
   const [analyzeResult, setAnalyzeResult] = useState('');
@@ -60,6 +73,8 @@ const LLMAssistantPage = () => {
   // Voice transcript handler — fills input and auto-sends
   const handleVoiceTranscript = useCallback((transcript) => {
     if (!transcript.trim()) return;
+    setVoiceInterim('');
+    setVoiceError('');
     setChatInput(transcript);
     // Auto-send after a brief delay so user sees the text
     setTimeout(() => {
@@ -118,6 +133,7 @@ const LLMAssistantPage = () => {
 
   useEffect(() => {
     loadHealthStatus();
+    healthOverviewService.get().then(setOverview).catch(() => setOverview(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -166,6 +182,10 @@ const LLMAssistantPage = () => {
     }
   };
 
+  const useSuggestedQuestion = (question) => {
+    setChatInput(question);
+  };
+
   // Analyze handler
   const handleAnalyze = async () => {
     setAnalyzeLoading(true);
@@ -205,12 +225,17 @@ const LLMAssistantPage = () => {
   };
 
   // Health status display helpers
+  // NOTE: the backend returns status "healthy" (llm_service.LLMService.check_health),
+  // so we treat both "ok" and "healthy" as healthy.
+  const isHealthy = (s) =>
+    (s?.status === 'ok' || s?.status === 'healthy') && s?.model_available;
+
   const getHealthStatusIcon = () => {
     if (healthLoading)
       return <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />;
     if (!healthStatus)
       return <AlertCircle className="w-5 h-5 text-gray-400" />;
-    if (healthStatus.status === 'ok' && healthStatus.model_available)
+    if (isHealthy(healthStatus))
       return <CheckCircle className="w-5 h-5 text-green-500" />;
     if (healthStatus.status === 'model_not_found')
       return <XCircle className="w-5 h-5 text-yellow-500" />;
@@ -220,7 +245,7 @@ const LLMAssistantPage = () => {
   const getHealthStatusText = () => {
     if (healthLoading) return t('llm.checking');
     if (!healthStatus) return t('llm.notChecked');
-    if (healthStatus.status === 'ok' && healthStatus.model_available)
+    if (isHealthy(healthStatus))
       return t('llm.running', { model: healthStatus.model });
     if (healthStatus.status === 'model_not_found')
       return t('llm.modelNotFound', { model: healthStatus.model });
@@ -229,6 +254,8 @@ const LLMAssistantPage = () => {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      <HealthOverview data={overview} loading={!overview} onRefresh={() => healthOverviewService.get().then(setOverview)} />
+      <HealthHistory />
       {/* Page Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
@@ -268,9 +295,9 @@ const LLMAssistantPage = () => {
       </GlassCard>
 
       {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* Chat Section */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-3">
           <GlassCard className="p-6 flex flex-col h-[500px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white">
@@ -287,12 +314,17 @@ const LLMAssistantPage = () => {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto space-y-4 mb-4">
               {messages.length === 0 ? (
-                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                  <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p>{t('llm.emptyState')}</p>
-                  <p className="text-xs mt-2">
-                    {t('llm.emptyStateHint')}
-                  </p>
+                <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-8 text-center text-slate-500 dark:text-slate-400">
+                  <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400"><Bot className="size-7" /></div>
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">Ask your AI Health Assistant</p>
+                  <p className="mt-2 text-sm leading-6">Get insights about your health records, documents, wellness, and general health questions.</p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-2">
+                    {['What trends do you see in my weight?', 'Explain my latest health report', 'What should I track regularly?'].map((question) => (
+                      <button key={question} type="button" onClick={() => useSuggestedQuestion(question)} className="rounded-full border border-blue-100 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300 dark:hover:bg-slate-700">
+                        {question}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 messages.map((msg, index) => (
@@ -307,6 +339,18 @@ const LLMAssistantPage = () => {
                     <p className="text-sm text-gray-900 dark:text-white whitespace-pre-wrap">
                       {msg.content}
                     </p>
+                    {msg.role === 'assistant' && msg.content ? (
+                      <button
+                        type="button"
+                        onClick={() => (isSpeaking ? cancelSpeech() : speak(msg.content))}
+                        className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                        aria-label={isSpeaking ? t('llm.stop') : t('llm.speak')}
+                        title={isSpeaking ? t('llm.stop') : t('llm.speak')}
+                      >
+                        {isSpeaking ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                        <span>{isSpeaking ? t('llm.stop') : t('llm.speak')}</span>
+                      </button>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -325,6 +369,8 @@ const LLMAssistantPage = () => {
               />
               <VoiceButton
                 onTranscript={handleVoiceTranscript}
+                onInterim={setVoiceInterim}
+                onError={(msg) => setVoiceError(msg)}
                 disabled={chatLoading}
                 size="md"
               />
@@ -340,11 +386,21 @@ const LLMAssistantPage = () => {
                 )}
               </Button>
             </div>
+            {voiceInterim ? (
+              <div className="mt-2 text-xs text-blue-500 dark:text-blue-400">
+                🎤 {voiceInterim}
+              </div>
+            ) : null}
+            {voiceError ? (
+              <div className="mt-2 text-xs text-red-500 dark:text-red-400">
+                Mic error: {voiceError}
+              </div>
+            ) : null}
           </GlassCard>
         </div>
 
         {/* Analyze & Suggestions */}
-        <div className="space-y-6">
+        <div className="space-y-6 lg:col-span-2">
           {/* Analyze */}
           <GlassCard className="p-6">
             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
@@ -366,9 +422,24 @@ const LLMAssistantPage = () => {
               )}
             </Button>
             {analyzeResult ? (
-              <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 max-h-60 overflow-y-auto">
-                {analyzeResult}
+              analyzeResult.toLowerCase().includes('no health records available') ? (
+                <div className="rounded-xl border border-blue-100 bg-white p-6 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400"><Bot className="size-5" /></div>
+                  <p className="font-semibold text-slate-900 dark:text-white">No health records available</p>
+                  <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600 dark:text-slate-300">We don't have enough health-record data to generate a personalized analysis yet. Add a health record to get personalized insights.</p>
+                  <Button onClick={() => navigate('/records')} className="mt-5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white">Add Health Record</Button>
+                </div>
+              ) : (
+              <div className="rounded-xl border border-blue-100 bg-white p-5 text-sm text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
+                  <Bot className="size-4" /> AI-generated analysis
+                </div>
+                <div className="max-h-96 overflow-y-auto pr-2 leading-7 [scrollbar-color:theme(colors.slate.300)_transparent] dark:[scrollbar-color:theme(colors.slate.600)_transparent]">
+                  <MarkdownContent content={analyzeResult} />
+                </div>
+                <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">Generated just now</p>
               </div>
+              )
             ) : (
               <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-4">
                 {t('llm.analyzeHint')}

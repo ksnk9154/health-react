@@ -1,0 +1,26 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  Hugging Face Spaces configuration
+#  Deploy the backend for FREE (no credit card required) via:
+#
+#  Option A — Docker (recommended):
+#    1. Create a new Space at https://huggingface.co/spaces/new
+#       SDK: Docker, Visibility: Public (free), Hardware: CPU basic
+#    2. Push your repo and set the Space to build from this Dockerfile:
+#       git push https://huggingface.co/spaces/YOUR-USERNAME/health-react-backend main
+#    3. The app listens on PORT=7860 (HF Spaces default).
+#
+#  Option B — Direct deployment from this repo:
+#    Create a Space, select "Docker", and point it at backend/Dockerfile
+#    with PORT env var set to 7860.
+#
+#  Free tier: 30 GB storage, 16 GB ephemeral disk, 2 vCPU / 8 GB RAM.
+#  Note: Filesystem is ephemeral — SQLite DB resets on restart.
+#        Enable "PostgreSQL" add-on in Space settings for persistence.
+# ──────────────────────────────────────────────────────────────────────────────
+# HF Spaces requires the app to listen on port 7860
+env_vars:
+  PORT: "7860"
+  JWT_SECRET: REPLACE_WITH_32_BYTE_RANDOM_SECRET
+  HEALTH_DB_PATH: /data/health.db
+  DOCUMENT_STORAGE_PATH: /data/storage/uploads
+

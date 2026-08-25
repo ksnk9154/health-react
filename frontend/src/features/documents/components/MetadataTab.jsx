@@ -7,7 +7,7 @@ import { Copy, Check } from 'lucide-react';
  * Features:
  * - Read-only metadata display
  * - Copy checksum
- * - Analysis history (placeholder for Phase 2c)
+ * - Analysis history is available in the Ask AI tab (History count)
  */
 export default function MetadataTab({ document }) {
   const [copiedField, setCopiedField] = useState(null);
@@ -72,13 +72,16 @@ export default function MetadataTab({ document }) {
         </div>
       </div>
 
-      {/* Analysis History (Placeholder for Phase 2c) */}
+      {/* Analysis History */}
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-4">AI Analysis History</h3>
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
-          <p className="text-sm text-blue-800 mb-2">Coming in Phase 2c</p>
+          <p className="text-sm text-blue-800 mb-2">
+            AI analysis history is available in the Ask AI tab.
+          </p>
           <p className="text-xs text-blue-600">
-            AI-powered analysis (summary, explanation, Q&A) will be available here.
+            Open the Ask AI tab and click the History button to view past
+            summaries, explanations, and Q&amp;A results for this document.
           </p>
         </div>
       </div>

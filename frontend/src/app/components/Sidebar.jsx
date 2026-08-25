@@ -12,20 +12,24 @@ import {
 } from 'lucide-react';
 import { cn } from './ui/utils';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const Sidebar = ({ isOpen, onClose }) => {
   const { t } = useLanguage();
+  const { user } = useAuth();
+  const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+
   const navigation = [
     { name: t('sidebar.home'), href: '/home', icon: Home },
-    { name: t('sidebar.dashboard'), href: '/dashboard', icon: LayoutDashboard },
+    { name: t('sidebar.dashboard'), href: '/dashboard', icon: LayoutDashboard, adminOnly: true },
     { name: t('sidebar.records'), href: '/records', icon: FileText },
     { name: t('sidebar.documents'), href: '/documents', icon: FileText },
-    { name: t('sidebar.analytics'), href: '/analytics', icon: BarChart3 },
-    { name: t('sidebar.userManagement'), href: '/admin/users', icon: Users },
+    { name: t('sidebar.analytics'), href: '/analytics', icon: BarChart3, adminOnly: true },
+    { name: t('sidebar.userManagement'), href: '/admin/users', icon: Users, adminOnly: true },
     { name: t('sidebar.profile'), href: '/profile', icon: UserCircle },
     { name: t('sidebar.settings'), href: '/settings', icon: Settings },
     { name: t('sidebar.aiAssistant'), href: '/llm', icon: Bot },
-  ];
+  ].filter((item) => (item.adminOnly ? isAdmin : true));
 
   return (
     <>

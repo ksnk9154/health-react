@@ -94,3 +94,91 @@ def create_record_from_form(rec: dict):
 
     finally:
         session.close()
+
+
+def update_record_from_form(record_id: int, rec: dict, user_ids):
+    """Update an existing health record.
+
+    Args:
+        record_id: ID of the record to update
+        rec: dict of fields to update (record_date, height_cm, weight_kg, etc.)
+        user_ids: list (or callable) of user_ids the current user may edit
+
+    Returns:
+        The updated record id
+
+    Raises:
+        ValueError: if record not found or not in the user's scope
+    """
+    session = get_db_session()
+    try:
+        ids = user_ids() if callable(user_ids) else user_ids
+
+        record = session.execute(
+            select(HealthRecord).where(
+                HealthRecord.id == record_id,
+                HealthRecord.user_id.in_(ids),
+            )
+        ).scalar_one_or_none()
+
+        if not record:
+            raise ValueError("Record not found")
+
+        iso_date = parse_date(rec.get("record_date"))
+        if not iso_date:
+            raise ValueError("Invalid date. Use YYYY-MM-DD")
+
+        new_height = rec.get("height_cm") if rec.get("height_cm") is not None else record.height_cm
+        new_weight = rec.get("weight_kg") if rec.get("weight_kg") is not None else record.weight_kg
+        bmi = calc_bmi(new_height, new_weight)
+
+        record.record_date = iso_date
+        record.height_cm = new_height
+        record.weight_kg = new_weight
+        record.bmi = bmi
+        record.food = rec.get("food", record.food)
+        record.calories = rec.get("calories", record.calories)
+        record.water_liters = rec.get("water_liters", record.water_liters)
+        record.sleep_hours = rec.get("sleep_hours", record.sleep_hours)
+        record.exercise = rec.get("exercise", record.exercise)
+
+        session.commit()
+        return record.id
+
+    finally:
+        session.close()
+
+
+def delete_record_by_id(record_id: int, user_ids):
+    """Delete a health record.
+
+    Args:
+        record_id: ID of the record to delete
+        user_ids: list (or callable) of user_ids the current user may edit
+
+    Returns:
+        True if deleted, False if not found
+
+    Raises:
+        ValueError: if record not found or not in scope
+    """
+    session = get_db_session()
+    try:
+        ids = user_ids() if callable(user_ids) else user_ids
+
+        record = session.execute(
+            select(HealthRecord).where(
+                HealthRecord.id == record_id,
+                HealthRecord.user_id.in_(ids),
+            )
+        ).scalar_one_or_none()
+
+        if not record:
+            raise ValueError("Record not found")
+
+        session.delete(record)
+        session.commit()
+        return True
+
+    finally:
+        session.close()

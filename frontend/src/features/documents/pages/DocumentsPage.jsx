@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Plus, RefreshCw, Search, Filter } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCw, Search, Filter } from 'lucide-react';
 import { useDocuments } from '../hooks/useDocuments';
 import DocumentList from '../components/DocumentList';
 import DocumentUploader from '../components/DocumentUploader';
@@ -242,20 +242,25 @@ export default function DocumentsPage() {
         title={t('documents.deleteConfirmation')}
         maxWidth="max-w-md"
       >
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('documents.deleteTitle')}</h3>
-        <p className="text-sm text-gray-600 mb-6">
+        <div className="p-6 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400">
+            <AlertTriangle className="size-6" aria-hidden="true" />
+          </div>
+          <h3 className="mb-2 text-xl font-semibold text-slate-900 dark:text-white">{t('documents.deleteTitle')}</h3>
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
           {t('documents.deleteConfirm')}
-        </p>
-        <div className="flex items-center justify-end gap-3">
+          </p>
+        </div>
+        <div className="flex flex-col-reverse gap-3 border-t border-slate-200 p-5 sm:flex-row sm:justify-center dark:border-slate-700">
           <button
             onClick={() => setDeleteConfirm(null)}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            className="min-w-32 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 dark:focus-visible:ring-offset-slate-900"
           >
             {t('common.cancel')}
           </button>
           <button
             onClick={() => handleDelete(deleteConfirm)}
-            className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+            className="min-w-32 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
           >
             {t('common.delete')}
           </button>

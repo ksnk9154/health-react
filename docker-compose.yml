@@ -1,0 +1,39 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  docker-compose.yml — Local *production-like* deployment (frontend + backend)
+#  Useful for staging / testing before pushing to a cloud platform.
+# ──────────────────────────────────────────────────────────────────────────────
+name: health-react-prod
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: health-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Use a real secret in production. This one is just for local testing.
+      JWT_SECRET: "dev-secret-REPLACE-IN-PRODUCTION-with-32-byte-random"
+      HEALTH_DB_PATH: "/data/health.db"
+      DOCUMENT_STORAGE_PATH: "/data/storage/uploads"
+      DATABASE_URL: ""  # empty → SQLite fallback
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
+  frontend:
+    container_name: health-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:

@@ -1,0 +1,40 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  render.yaml — One-click deploy to Render.com (free tier eligible)
+#  https://render.com/docs/deploy-fastapi
+#
+#  Free tier notes:
+#    • Free PostgreSQL database: 256 MB (sufficient for dev/demo)
+#    • Free web service credit: $7/month (covers the 512 MB container)
+#    • No custom domain SSL on free plan
+#  ──────────────────────────────────────────────────────────────────────────────
+services:
+  - type: web
+    name: health-api
+    runtime: docker
+    plan: free       # ← free web service (512 MB RAM)
+    region: oregon
+    dockerfilePath: backend/Dockerfile
+    healthCheckPath: /docs
+    envVars:
+      # ← Set these in the Render dashboard (Secrets) or via `render secrets set`
+      - key: JWT_SECRET
+        value: REPLACE_WITH_32_BYTE_RANDOM_SECRET
+      - key: DATABASE_URL
+        value: ""
+      - key: HEALTH_DB_PATH
+        value: /data/health.db
+      - key: DOCUMENT_STORAGE_PATH
+        value: /data/storage/uploads
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: health-data
+      mountPath: /data
+      sizeGB: 1     # ← 1 GB disk (part of free tier)
+
+databases:
+  - name: health-db
+    plan: free      # ← 256 MB PostgreSQL (free tier)
+    databaseName: health
+    user: health
+    region: oregon

@@ -1,4 +1,4 @@
-import { FileText, File, Trash2, Eye, Loader, CheckCircle, XCircle } from 'lucide-react';
+import { FileText, Trash2, Eye, RefreshCw } from 'lucide-react';
 
 /**
  * DocumentCard - Individual document display card
@@ -43,7 +43,8 @@ export default function DocumentCard({
     const config = statusConfig[document.status] || statusConfig.UPLOADED;
 
     return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${config.color}`}>
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${config.color}`}>
+        <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
         {config.label}
       </span>
     );
@@ -78,7 +79,7 @@ export default function DocumentCard({
 
   return (
     <div
-      className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg hover:scale-[1.02] transition-all cursor-pointer group"
+      className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900"
       onClick={() => onSelect?.(document)}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -90,10 +91,10 @@ export default function DocumentCard({
         <div className="flex items-center gap-3">
           {getFileIcon()}
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-gray-900 truncate" title={document.original_filename}>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white truncate" title={document.original_filename}>
               {document.original_filename}
             </h3>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
               {formatFileSize(document.file_size)}
             </p>
           </div>
@@ -102,12 +103,12 @@ export default function DocumentCard({
       </div>
 
       {/* Meta */}
-      <div className="text-xs text-gray-500 mb-3">
+      <div className="mb-4 text-xs text-slate-500 dark:text-slate-400">
         Uploaded {formatDate(document.upload_time)}
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -120,16 +121,17 @@ export default function DocumentCard({
           View
         </button>
 
-        {document.status !== 'READY' && document.status !== 'EXTRACTING' && (
+        {document.status !== 'EXTRACTING' && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               onExtract?.(document.id);
             }}
-            className="flex-1 px-3 py-1.5 text-xs font-medium text-green-600 bg-green-50 rounded hover:bg-green-100 transition-colors"
-            aria-label={`Extract ${document.original_filename}`}
+            className={`flex-1 px-3 py-1.5 text-xs font-medium ${document.status === 'READY' ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-green-600 bg-green-50 hover:bg-green-100'} rounded hover:opacity-80 transition-colors`}
+            aria-label={`${document.status === 'READY' ? 'Re-extract observations from' : 'Extract'} ${document.original_filename}`}
           >
-            Extract
+            <RefreshCw className="w-3 h-3 inline mr-1" />
+            {document.status === 'READY' ? 'Re-extract' : 'Extract'}
           </button>
         )}
 

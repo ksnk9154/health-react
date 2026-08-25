@@ -525,6 +525,34 @@ class TestDocumentService:
         assert doc is not None
         assert doc["id"] == doc_id
         assert doc["original_filename"] == "get_test.txt"
+        # Regression: extracted_text/text_chunks must be exposed in the API
+        # payload so the frontend "Extracted Text" viewer can render them.
+        # (Previously omitted from _document_to_dict, so a READY document
+        # always showed "No extracted text available".)
+        assert "extracted_text" in doc
+        assert "text_chunks" in doc
+
+    def test_get_document_exposes_extracted_text(self, test_user_id, sample_files):
+        """After extraction, the API payload must include the extracted text."""
+        with open(sample_files["txt"], "rb") as f:
+            content = f.read()
+        up = upload_document(test_user_id, "extract_view.txt", content, "text/plain")
+        doc_id = up["data"]["id"]
+
+        # Simulate a completed extraction by writing extracted_text directly
+        # (same effect as _perform_extraction() for a text file).
+        from services.document_service import _perform_extraction
+        try:
+            _perform_extraction(doc_id)
+        except Exception:
+            pass
+
+        doc = get_document(doc_id, test_user_id)
+        assert doc is not None
+        assert doc.get("status") == "READY"
+        assert "extracted_text" in doc
+        assert isinstance(doc.get("extracted_text"), str)
+        assert len(doc["extracted_text"]) > 0
 
     def test_delete_document(self, test_user_id, sample_files):
         """Test document deletion."""

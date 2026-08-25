@@ -1,20 +1,34 @@
-# TODO - Enforce Preferred Language Across All AI Responses
+# Frontend ↔ Backend Integration Checklist
 
-## Backend
-- [x] Rewrite `backend/services/multilingual_system_prompt.py` with a single reusable language-enforcement helper + mandatory instruction block.
-- [x] Update `backend/services/prompt_builder.py` `get_system_prompt()` to accept and inject `preferred_language`.
-- [x] Thread `preferred_language` through `backend/services/analysis_service.py` `analyze_document()` and `analyze_document_stream()`.
-- [x] Update `backend/api/routes/analyses.py` to accept `language` in request bodies and pass to analysis_service (incl. streaming).
-- [x] Update `backend/api/routes/llm.py` to accept `language` and pass to LLMService (chat/analyze/suggestions).
-- [x] Update `backend/services/llm_service.py` to thread `preferred_language` into system prompt building.
+## Phase A — RecordsPage
+- [x] A1: Fix RecordsPage.jsx search debounce bug (stale closure / unhandled cleanup)
+- [x] A2: Verify backend + frontend build
 
-## Frontend
-- [x] Update `frontend/src/app/services/api.js` documentService to include `language` in all analysis/stream requests (non-streaming via query param, QA via body, streaming via query param/body).
-- [x] Update `frontend/src/features/documents/components/AskAITab.jsx` to pass `language` (fixed qa-case argument-shift bug).
+## Phase B — Live Data Pages
+- [x] B1: Wire DashboardPage.jsx — use `adminAnalyticsService`
+- [x] B2: Wire AnalyticsPage.jsx — use `adminAnalyticsService`
+- [x] B3: Wire HomePage.jsx — use `adminAnalyticsService`
+- [x] B4: Wire StaffRecordsPage.jsx — use `staffService`
+- [x] B5: Verify backend + frontend build
 
-## Tests
-- [x] Add `backend/tests/test_multilingual_prompt.py` for language enforcement (name mapping, front-loading, empty, with context, prompt_builder integration).
+## Phase C — Auth / Admin
+- [ ] C1: Fix RegisterPage.jsx — use `authService.register`
+- [ ] C2: Backend — add `update_user`/`delete_user` in `services/admin.py`
+- [ ] C3: Backend — add `PUT/DELETE /admin/users/{id}` in `api/routes/admin.py`
+- [ ] C4: Enable UserManagementPage.jsx edit/delete
+- [ ] C5: Verify backend + frontend build
 
-## Verification
-- [x] Run the backend test suite once (121 passed, 1 skipped).
-- [x] Run frontend production build (vite build succeeded, 2357 modules transformed).
+## Phase D — Profile & Settings
+- [ ] D1: Backend — add `UserSettings` model in `db/models.py`
+- [ ] D2: Backend — new `api/routes/settings.py` (`/settings` + `/profile` GET/PUT)
+- [ ] D3: Backend — add `POST /auth/change-password` in `api/routes/auth.py`
+- [ ] D4: Backend — register settings router in `api/main.py`
+- [ ] D5: Wire ProfilePage.jsx — use `profileService` + change-password
+- [ ] D6: Wire SettingsPage.jsx — use `settingsService`
+- [ ] D7: Verify backend + frontend build
+
+## Phase E — Verify
+- [ ] E1: Backend import/startup check
+- [ ] E2: Frontend `npm run build`
+- [ ] E3: Summary of all changes
+
