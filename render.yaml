@@ -1,40 +1,35 @@
 # ──────────────────────────────────────────────────────────────────────────────
-#  render.yaml — One-click deploy to Render.com (free tier eligible)
-#  https://render.com/docs/deploy-fastapi
+#  render.yaml — Blueprint deploy to Render.com
 #
-#  Free tier notes:
-#    • Free PostgreSQL database: 256 MB (sufficient for dev/demo)
-#    • Free web service credit: $7/month (covers the 512 MB container)
-#    • No custom domain SSL on free plan
-#  ──────────────────────────────────────────────────────────────────────────────
+#  FREE-tier strategy:
+#    • ONE free web service running the FastAPI backend via Docker
+#    • NO managed PostgreSQL (free Postgres expires after 30 days)
+#    • NO persistent disk (not available on the free plan) — we use SQLite
+#      stored on the container's local filesystem instead.
+#
+#  Trade-off: SQLite data lives in the container filesystem, so it resets on
+#  every redeploy/restart of the service. Fine for demo/dev; add PostgreSQL
+#  later if persistence is needed.
+# ──────────────────────────────────────────────────────────────────────────────
 services:
   - type: web
     name: health-api
     runtime: docker
-    plan: free       # ← free web service (512 MB RAM)
+    plan: free                      # ← Free instance (512 MB RAM, spins down when idle)
     region: oregon
     dockerfilePath: backend/Dockerfile
+    dockerContext: .                # repo root — Dockerfile COPYs backend/ from here
     healthCheckPath: /docs
+    autoDeploy: true                # redeploy on every push to main
     envVars:
-      # ← Set these in the Render dashboard (Secrets) or via `render secrets set`
       - key: JWT_SECRET
-        value: REPLACE_WITH_32_BYTE_RANDOM_SECRET
+        generateValue: true         # ← Render generates a strong random secret
       - key: DATABASE_URL
-        value: ""
+        value: ""                   # empty → SQLite fallback in db/session.py
       - key: HEALTH_DB_PATH
-        value: /data/health.db
+        value: /home/appuser/app/backend/health.db
       - key: DOCUMENT_STORAGE_PATH
-        value: /data/storage/uploads
+        value: /home/appuser/app/backend/storage/uploads
       - key: PYTHONUNBUFFERED
         value: "1"
-    disk:
-      name: health-data
-      mountPath: /data
-      sizeGB: 1     # ← 1 GB disk (part of free tier)
 
-databases:
-  - name: health-db
-    plan: free      # ← 256 MB PostgreSQL (free tier)
-    databaseName: health
-    user: health
-    region: oregon
