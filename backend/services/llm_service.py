@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+# Optional API key for Ollama Cloud (https://ollama.com). When present,
+# requests are authenticated with `Authorization: Bearer <key>`.
+# When absent, plain local Ollama is used exactly as before.
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "")
 # Best available now: llama3.1:8b
 # Recommended upgrade: qwen2.5:7b
 # Best multilingual choice: qwen3:8b (if hardware can run it)
@@ -29,25 +33,60 @@ class LLMService:
         self.base_url = OLLAMA_URL.rstrip("/")
         self.default_model = DEFAULT_LLM_MODEL
         self.timeout = OLLAMA_TIMEOUT
+        self.api_key = OLLAMA_API_KEY
+        # Cloud mode is active whenever an API key is configured.
+        self.is_cloud = bool(self.api_key)
+
+    def _headers(self) -> dict:
+        """Auth headers for Ollama Cloud. Empty for local Ollama.
+
+        The API key must never be logged or included in error messages.
+        """
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    def _describe_host(self) -> str:
+        """Human-readable target for logs/responses (never includes the key)."""
+        return self.base_url
 
     async def health_check(self) -> bool:
-        """Check if Ollama is available."""
+        """Check if Ollama (local or Cloud) is available."""
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                return response.status_code == 200
+                response = await client.get(
+                    f"{self.base_url}/api/tags",
+                    headers=self._headers(),
+                )
+                if response.status_code == 200:
+                    return True
+                logger.error(
+                    "Ollama health check returned HTTP %s from %s (%s mode)",
+                    response.status_code,
+                    self._describe_host(),
+                    "cloud" if self.is_cloud else "local",
+                )
+                return False
         except Exception as e:
-            logger.error(f"Ollama health check failed: {e}")
+            logger.error(f"Ollama health check failed ({self._describe_host()}): {e}")
             return False
 
     async def get_available_models(self) -> list[str]:
         """Get list of available models."""
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
+                response = await client.get(
+                    f"{self.base_url}/api/tags",
+                    headers=self._headers(),
+                )
                 if response.status_code == 200:
                     data = response.json()
                     return [model["name"] for model in data.get("models", [])]
+                logger.error(
+                    "Failed to list models: HTTP %s from %s",
+                    response.status_code,
+                    self._describe_host(),
+                )
                 return []
         except Exception as e:
             logger.error(f"Failed to get models: {e}")
@@ -100,6 +139,7 @@ class LLMService:
                 response = await client.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
+                    headers=self._headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -116,6 +156,7 @@ class LLMService:
                     "POST",
                     f"{self.base_url}/api/generate",
                     json=payload,
+                    headers=self._headers(),
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -174,6 +215,7 @@ class LLMService:
                 response = await client.post(
                     f"{self.base_url}/api/chat",
                     json=payload,
+                    headers=self._headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -190,6 +232,7 @@ class LLMService:
                     "POST",
                     f"{self.base_url}/api/chat",
                     json=payload,
+                    headers=self._headers(),
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -214,12 +257,23 @@ class LLMService:
         """Sync health check — returns dict matching HealthResponse schema."""
         is_healthy = asyncio.run(self.health_check())
         models = asyncio.run(self.get_available_models()) if is_healthy else []
+        mode = "cloud" if self.is_cloud else "local"
+        if is_healthy:
+            detail = None
+        else:
+            detail = (
+                f"Ollama Cloud ({self._describe_host()}) is not reachable "
+                "or rejected the API key — verify OLLAMA_URL and OLLAMA_API_KEY"
+                if self.is_cloud
+                else "Ollama service is not reachable"
+            )
         return {
             "status": "healthy" if is_healthy else "unavailable",
+            "mode": mode,
             "model": self.default_model,
             "model_available": is_healthy,
             "available_models": models if models else None,
-            "detail": None if is_healthy else "Ollama service is not reachable",
+            "detail": detail,
         }
 
     def chat(
