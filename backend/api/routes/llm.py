@@ -14,9 +14,43 @@ from services.notification_service import create_notification
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# History sanitation limits (defensive: keep prompt size bounded)
+_MAX_HISTORY_ENTRIES = 20
+_MAX_HISTORY_CHARS = 4000
+
+
+def _validate_history(history) -> List[Dict[str, str]]:
+    """Sanitize chat history sent by the client.
+
+    Never raises — invalid entries are dropped so a malformed history can
+    never turn /llm/chat into a 500. Each kept entry becomes
+    {"role": "user"|"assistant", "content": "<stripped, length-capped>"}.
+    """
+    if not history:
+        return []
+    if not isinstance(history, list):
+        return []
+
+    validated: List[Dict[str, str]] = []
+    for entry in history[:_MAX_HISTORY_ENTRIES]:
+        if not isinstance(entry, dict):
+            continue
+        role = entry.get("role")
+        content = entry.get("content")
+        if role not in ("user", "assistant"):
+            continue
+        if not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+        validated.append({"role": role, "content": content[:_MAX_HISTORY_CHARS]})
+    return validated
+
 
 def _get_service() -> LLMService:
     return LLMService()
+
 
 
 class ChatRequest(BaseModel):
@@ -40,6 +74,7 @@ class HealthResponse(BaseModel):
 
     status: str
     model: str
+    mode: Optional[str] = None  # "local" | "cloud" | "unavailable"
     model_available: Optional[bool] = None
     available_models: Optional[List[str]] = None
     detail: Optional[str] = None
